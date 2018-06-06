@@ -321,6 +321,6 @@ if __name__ == "__main__":
     with alarmCtxt(1): send_end_round(cur_hand)
     if logfd: logfd.close()
 
-    # Log out final scores: money divided by sqrt(num_hands), since that's
+    # Log out final scores: money divided by num_hands, since that's
     # the scale of a random walk of this length.
-    print "Scores:", comma_str(map(lambda m : m / sqrt(cur_hand), money))
+    print "Scores:", comma_str(map(lambda m : m / float(cur_hand), money))
