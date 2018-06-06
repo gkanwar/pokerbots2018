@@ -1,0 +1,261 @@
+\documentclass{article}
+
+\usepackage{fancyvrb}
+\usepackage{xcolor}
+
+\begin{document}
+
+\section{Introduction}
+Communication is done entirely through stdin/stdout. Stderr is reserved
+for logging debug info. This makes clients
+language-independent and communication as simple as possible (hopefully).
+I'm imagining ``bots'' are binaries that satisfy the input/output protocol
+as defined below, and would be submitted in binary form to the server
+which then executes a copy per instance at a table.
+
+For now, the game is limited to 3-player Kuhn Poker (4-cards, one card dealt
+to each person, ante of 1, and a maximum bet of two). Hopefully we can extend to
+proper Hold-Em at some point.
+
+A \textbf{round} looks like a cash game with an end condition: a probability
+per hand to be the last hand.
+Bots have infinite bankroll, and the absolute wins/debt against the bankroll determines
+score in a round. Probability of ending on a given round TBD (should be
+long enough that the bots have a chance to learn and adapt to other play styles).
+
+At the start of a round, all clients are fired up and given the \texttt{init\_round}
+message with the blind info (for Kuhn Poker, blind of 1 for everyone) and starting totals
+(for infinite bankroll we set these to zero and just allow negative).
+Inital button is chosen uniformly
+at random and hands are played out (\texttt{init\_hand}, \texttt{play}, and
+\texttt{end\_hand} messages). The random end condition is tested after
+each round, and once it is hit the \texttt{end\_round} message is sent out
+so the bots can write out any debug info if desired.
+
+\section{Protocol}
+Typewriter font stuff below is verbatim format for sent/received messages,
+with angled bracket labels indicating things to fill in. Players are labeled
+0, 1, and 2, with 0 the bot being interacted with and going clockwise
+about the table from there. In other words, the server will be sending
+messages to each bot differently so that everything lines up with their view
+of the table. All numbers are integers. Generally the upcoming message protocol
+is sent in \texttt{lower\_underscore}, information is
+sent in \texttt{CamelCase} fields and
+actions are indicated by \texttt{ALL CAPS}.
+
+\subsection{\texttt{init\_round}}
+Server sends starting money, blinds, button location,
+and probability $a/b$ of ending the round after each hand:
+\begin{verbatim}
+init_round
+Money: <m0>,<m1>,<m2>
+Blinds: <b0>,<b1>,<b2>
+Button: <player id>
+EndProb: <a>,<b>
+\end{verbatim}
+Client sends back:
+\begin{verbatim}
+READY
+\end{verbatim}
+
+\subsection{\texttt{end\_round}}
+Server sends final change in bankroll (i.e.~score) for each player
+and total number of hands played:
+\begin{verbatim}
+end_round
+Bankrolls: <b0>,<b1>,<b2>
+NumHands: <num hands>
+\end{verbatim}
+The client, being the polite AI that it is, sends back
+\begin{verbatim}
+Thank you dealer, have a nice day!
+\end{verbatim}
+The client program should then exit after possibly writing
+out some logging info to stderr as desired.
+
+\subsection{\texttt{init\_hand}}
+Server sends current hand index (zero-indexed) and
+dealt card:
+\begin{verbatim}
+init_hand
+Hand: <hand number>
+Cards: <A or K or Q or J>
+\end{verbatim}
+Client confirms:
+\begin{verbatim}
+READY
+\end{verbatim}
+
+\subsection{\texttt{play}}
+Server sends list of actions for player 0, 1, and 2
+in that order:
+\begin{verbatim}
+play
+Action: <BLIND or PASS or BET or FOLD> <value>
+Action: <BLIND or PASS or BET or FOLD> <value>
+Action: <BLIND or PASS or BET or FOLD> <value>
+\end{verbatim}
+This includes, as the start of the list, the action the client
+last played (because player 0 is always the client itself).
+If this is the start of the hand, most actions will be listed
+as \texttt{BLIND} and the value paid, even though the bot never
+explicitly sent that command.
+
+The client then responds with their action:
+\begin{verbatim}
+<PASS or BET or FOLD> <value>
+\end{verbatim}
+The \texttt{<value>} field is always an integer and should be exactly
+the amount of money in front of you regardless of your action.
+This gives a check that the bot understands the state of the world,
+and makes it easier for other bots to play ``in the moment'' without
+lots of tracking state (the server checks this for us).
+For example, if the action is a raise of 25 over 15 previously bet, then
+the bot would output \texttt{BET 40}. As another example, if the
+bot has ante'd 1 and wants to fold, the output should be \texttt{FOLD 1}.
+
+The action \texttt{PASS} should only be sent if the client cannot
+play (for example if already folded, or all in). If checking,
+send \texttt{BET} with the current value put forward.
+
+\subsection{\texttt{end\_hand}}
+Server sends the last iteration of actions,
+list of revealed cards and a list of pots won
+(at least one and maybe side pots):
+\begin{verbatim}
+end_hand
+Action: <PASS or BET or FOLD> <value>
+Action: <PASS or BET or FOLD> <value>
+Action: <PASS or BET or FOLD> <value>
+Showdown: <c0>,<c1>,<c2>
+Pots: <value0>,<winner0> [<value1>,<winner1> ...]
+\end{verbatim}
+where \texttt{<ci>} is one of the card values or `\texttt{-}'
+to indicate folded/mucked. To simplify things,
+the server implements automatic mucking. As with the initial
+set of actions, some of these actions may have been skipped over
+because the play ended at a certain point in the betting orbit.
+Those are all reported as \texttt{PASS <value>} where \texttt{<value>}
+is the amount in front of that player as usual.
+
+Because the
+\texttt{<value>} always represents the money in front, for
+a game like Kuhn Poker with only one betting round, the total
+of all \texttt{<value>} reported in the last actions
+should match the total of all \texttt{<valuei>} pots.
+
+Client responds with either confirmation or request to rebuy
+(while we're just doing Kuhn, this should always be \texttt{OK}):
+\begin{verbatim}
+<REBUY or OK>
+\end{verbatim}
+TBD: For other games, how should rebuys be constrained? Should players be forced to
+rebuy if they go broke while the round is still going?
+
+After receiving responses from all clients, the server sends out
+all of these actions to everyone:
+\begin{verbatim}
+EndAction: <REBUY or OK>
+EndAction: <REBUY or OK>
+EndAction: <REBUY or OK>
+\end{verbatim}
+
+Finally, the client responds with their believed totals for each player
+as another way for the server to check that the bots understand the
+game state:
+\begin{verbatim}
+Money: <m0>,<m1>,<m2>
+\end{verbatim}
+
+\subsection{Interaction Structure}
+Bots can expect to always receive \texttt{init\_round} immediately
+on start, followed by the first \texttt{init\_hand}. For Kuhn Poker
+there is only either one or two \texttt{play} messages, followed
+by the \texttt{end\_hand} for each hand played. Each \texttt{end\_hand}
+will be followed by either the next \texttt{init\_hand} or \texttt{end\_round}
+determining whether the game lives on or has been called off by
+the random number generator.
+
+\subsection{Example}
+It's probably best to include an example of a round of Kuhn Poker,
+with three bots playing. Black is server text, red is player 0's
+responses.
+\begin{Verbatim}[commandchars=\\\{\}]
+init_round
+Money: 0,0,0
+Blinds: 1,1,1
+Button: 1
+EndProb: 50,100
+{\color{red}READY}
+init_hand
+Hand: 0
+Cards: Q
+{\color{red}READY}
+play
+Action: BLIND 1
+Action: BLIND 1
+Action: BET 2
+{\color{red}BET 2}
+end_hand
+Action: BET 2
+Action: FOLD 1
+Action: PASS 2
+Showdown: -,-,K
+Pots: 5,2
+{\color{red}OK}
+EndAction: OK
+EndAction: OK
+EndAction: OK
+{\color{red}Money: -2,-1,3}
+init_hand
+Hand: 1
+Cards: A
+{\color{red}READY}
+play
+Action: BLIND 1
+Action: BLIND 1
+Action: BLIND 1
+{\color{red}BET 2}
+end_hand
+Action: BET 2
+Action: FOLD 1
+Action: FOLD 1
+Showdown: -,-,-
+Pots: 4,0
+{\color{red}OK}
+EndAction: OK
+EndAction: OK
+EndAction: OK
+{\color{red}Money: 0,-2,2}
+end_round
+Bankrolls: 0,-2,2
+NumHands: 2
+{\color{red}Thank you dealer, have a nice day!}
+\end{Verbatim}
+In this round, only two hands were played because the end probability
+was so high ($1/2$). The bot playing broke even after the two hands.
+In the first hand, the button was on player 1, so there are initial
+\texttt{BLIND} actions for players 0 and 1 in the first \texttt{play}
+and a filler \texttt{PASS} for player 2 in the \texttt{end\_hand} message.
+In the second hand, the button was on player 2, so all initial actions
+were reported as \texttt{BLIND} to player 0 since they were the first to
+act.
+
+\section{Handling Errors}
+In the name of easy debugging I think we should do fail-fast. In
+other words, if a bot responds or plays incorrectly during a round
+the entire round is cancelled and the error is reported. The server
+might have some sort of quarantine to test submissions against
+random bots and make sure a few rounds play through okay before
+adding the bot to the pool.
+
+\section{Reporting}
+I imagine running all submitted bots in a ``tournament'' format every
+hour (resources permitting) and publishing updated results in a small
+web server alongside the main game server. MIT's XVM should have enough
+resources to handle this, so we have a central location to host everything.
+
+URL: \texttt{http://hssp.xvm.mit.edu/pokerbots/}
+
+
+\end{document}
