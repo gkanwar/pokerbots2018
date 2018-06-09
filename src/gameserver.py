@@ -88,7 +88,7 @@ def send_init_round(first_blind):
         p.stdin.write("EndProb: " + comma_str(ENDPROB_AB) + "\n")
         p.stdin.flush()
         resp = p.stdout.readline().strip()
-        assert resp == "READY", "Expected READY but got %s" % resp
+        assert resp == "READY", "Expected READY but got %s from player%d" % (resp, i)
 
 def send_init_hand(deal, hand):
     for i,p in enumerate(ps):
