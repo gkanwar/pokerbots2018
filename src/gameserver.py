@@ -176,6 +176,15 @@ def send_end_round(num_hands):
         resp = p.stdout.readline().strip()
         assert resp == "Thank you dealer, have a nice day!"
 
+def print_player_status(status, last_player):
+    act,val = status
+    sys.stdout.write(("Player %d: %s %d" % (pi, act.rjust(5), val)).rjust(17))
+    if last_player:
+        sys.stdout.write("\n")
+    else:
+        sys.stdout.write("\t")
+    
+
 def alarm_handler(signum, frame):
     raise Exception()
 
@@ -209,6 +218,8 @@ if __name__ == "__main__":
     while True:
         print "== Hand %d ==" % (cur_hand)
         print "First blind: %d" % first_blind
+        for it in xrange(first_blind):
+            sys.stdout.write(" "*17 + "\t")
         deal = CARDS[:]
         shuffle(deal)
         deal = deal[:NPLAYERS]
@@ -216,9 +227,7 @@ if __name__ == "__main__":
         statuses = [('BLIND', BLINDS[m(i+first_blind)]) for i in xrange(NPLAYERS)]
         for it in xrange(len(statuses)):
             pi = m(first_blind + it)
-            act,val = statuses[pi]
-            sys.stdout.write("Player %d: %s %d\t" % (pi, act.rjust(5), val))
-        sys.stdout.write("\n")
+            print_player_status(statuses[pi], m(pi+1) == 0)
         sys.stdout.flush()
         # Keep running track of last option, so we can exit the loop.
         # Last option starts with the last person to pay the blind (or ante here).
@@ -233,8 +242,7 @@ if __name__ == "__main__":
             old_act,old_val = statuses[pi]
             with alarmCtxt(1): update_action(pi, statuses)
             act,val = statuses[pi]
-            sys.stdout.write("Player %d: %s %d\t" % (pi, act.rjust(5), val))
-            if m(it+1) == 0: sys.stdout.write("\n")
+            print_player_status(statuses[pi], m(pi+1) == 0)
             sys.stdout.flush()
             if old_act == 'FOLD' or old_act == 'PASS':
                 assert act == 'PASS', \
@@ -271,7 +279,7 @@ if __name__ == "__main__":
             assert False, "Failed to complete bet round within %d actions." % (MAX_BET_ACTIONS)
         # pi is the last played index
         assert pi is not None
-        if m(it+1) != 0: print
+        if m(pi+1) != 0: print
 
         # Showdown
         showdown = ['-']*len(statuses)
@@ -306,6 +314,7 @@ if __name__ == "__main__":
         # Debug output
         print "Showdown:", comma_str(showdown)
         print "Money:", comma_str(money)
+        print
 
         with alarmCtxt(1):
             send_end_hand(pi, statuses, showdown, [(main_pot, winner)], money)
