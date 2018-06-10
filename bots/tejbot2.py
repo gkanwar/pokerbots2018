@@ -72,38 +72,28 @@ def fl(): sys.stdout.flush()
 ### Brain global state.
 ### Game state is represented by values of actions
 ### since the beginning.
-LAMBDA = 0.5 # discount
+GAMMA = 0.5 # discount
 ALPHA = 0.01 # learn rate
+check_bet = [('BET', 1), ('BET', 2)]
+call_fold = [('BET', 2), ('FOLD', 1)]
 state_action_map = {
-    (1,1,1): [
-        ('BET', 1), ('BET', 2)],
-    (1,1,1,1): [
-        ('BET', 1), ('BET', 2)],
-    (1,1,1,2): [
-        ('BET', 2), ('FOLD', 1)],
-    (1,1,1,1,1): [
-        ('BET', 1), ('BET', 2)],
-    (1,1,1,1,2): [
-        ('BET', 2), ('FOLD', 1)],
-    (1,1,1,2,1): [
-        ('BET', 2), ('FOLD', 1)],
-    (1,1,1,2,2): [
-        ('BET', 2), ('FOLD', 1)],
+    (1,1,1): check_bet,
+    (1,1,1,1): check_bet,
+    (1,1,1,2): call_fold,
+    (1,1,1,1,1): check_bet,
+    (1,1,1,1,2): call_fold,
+    (1,1,1,2,1): call_fold,
+    (1,1,1,2,2): call_fold,
     (1,1,1,1,1,1): [],
-    (1,1,1,1,1,2): [
-        ('BET', 2), ('FOLD', 1)],
-    (1,1,1,1,2,1): [
-        ('BET', 2), ('FOLD', 1)],
-    (1,1,1,1,2,2): [
-        ('BET', 2), ('FOLD', 1)],
+    (1,1,1,1,1,2): call_fold,
+    (1,1,1,1,2,1): call_fold,
+    (1,1,1,1,2,2): call_fold,
     (1,1,1,2,1,2): [],
     (1,1,1,2,1,1): [],
     (1,1,1,2,2,2): [],
     (1,1,1,2,2,1): [],
-    (1,1,1,1,1,2,1): [
-        ('BET', 2), ('FOLD', 1)],
-    (1,1,1,1,1,2,2): [
-        ('BET', 2), ('FOLD', 1)],
+    (1,1,1,1,1,2,1): call_fold,
+    (1,1,1,1,1,2,2): call_fold,
     (1,1,1,1,2,1,2): [],
     (1,1,1,1,2,1,1): [],
     (1,1,1,1,2,2,2): [],
@@ -123,6 +113,18 @@ def check_state_action_map(state):
     return True
 assert check_state_action_map((1,1,1))
 print >>sys.stderr, "State action map is good!"
+## Expand state with card in hard, trimming tree to remove stupid plays
+new_state_action_map = {}
+call_only = [('BET', 2)]
+for state in state_action_map:
+    acts = state_action_map[state]
+    if len(acts) == 0: continue
+    for card in card_map.values():
+        if card == max(card_map.values()) and acts == call_fold:
+            new_state_action_map[(card, state)] = call_only
+        else:
+            new_state_action_map[(card, state)] = acts
+state_action_map = new_state_action_map
 
 def update_state(acts, state):
     state = list(state)
@@ -134,11 +136,11 @@ def update_state(acts, state):
 
 ## Init Q function to uniform
 Q_function = {}
-for state in state_action_map:
-    acts = state_action_map[state]
-    Q_function[state] = []
+for key in state_action_map:
+    acts = state_action_map[key]
+    Q_function[key] = []
     for i,act in enumerate(acts):
-        Q_function[state].append(0.0)
+        Q_function[key].append(0.0)
 
 ### Start brain
 get_msg_named('init_round')
@@ -156,7 +158,7 @@ while True:
     hand,card = get_init_hand()
     state = tuple(blinds)
     choices = []
-    assert state in state_action_map
+    assert (card,state) in state_action_map
     print "READY"
     fl()
 
@@ -164,11 +166,12 @@ while True:
     get_msg_named('play')
     acts = get_play_actions()
     state = update_state(acts, state)
-    assert state in Q_function
-    assert len(Q_function[state]) > 0
-    max_ind = max(range(len(Q_function[state])), key=lambda i: Q_function[state][i])
-    choices.append((state, max_ind))
-    act,val = state_action_map[state][max_ind]
+    key = (card,state)
+    assert key in Q_function
+    assert len(Q_function[key]) > 0
+    max_ind = max(range(len(Q_function[key])), key=lambda i: Q_function[key][i])
+    choices.append((key, max_ind))
+    act,val = state_action_map[key][max_ind]
     print act, val
     fl()
         
@@ -176,9 +179,10 @@ while True:
     if msg == "play":
         acts = get_play_actions()
         state = update_state(acts, state)
-        max_ind = max(range(len(Q_function[state])), key=lambda i: Q_function[state][i])
-        choices.append((state, max_ind))
-        act,val = state_action_map[state][max_ind]
+        key = (card,state)
+        max_ind = max(range(len(Q_function[key])), key=lambda i: Q_function[key][i])
+        choices.append((key, max_ind))
+        act,val = state_action_map[key][max_ind]
         print act, val
         fl()
 
@@ -205,10 +209,12 @@ while True:
 
     # Update internal state
     first_blind = m(first_blind+1)
-    discount = 1.0
-    for state,ind in reversed(choices):
-        Q_function[state][ind] += ALPHA*my_delta*discount
-        discount *= LAMBDA
+    prev_key = None
+    for key,ind in reversed(choices):
+        learned = my_delta
+        if prev_key is not None:
+            learned += GAMMA*max(Q_function[prev_key])
+        Q_function[key][ind] = (1-ALPHA)*Q_function[key][ind] + ALPHA*learned
 
 # End round
 bs = get_bankrolls()
