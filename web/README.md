@@ -1,0 +1,1 @@
+This whole repo lived inside pokerbots2018 subdirectory with this structure. Probably should clean up directory paths if this is ever used again.
